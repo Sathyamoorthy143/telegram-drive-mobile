@@ -49,3 +49,11 @@ Running GramJS on a mobile phone required extensive polyfilling. This repository
 - `net`: WebSockets wrapped to simulate raw TCP streams.
 - `window.location`: Mocked to bypass GramJS browser restrictions.
 - `Buffer`: Full Uint8Array bridging for media downloads.
+
+## 🤝 Open Source & Contributing
+
+**This project is completely Open Source!** 🎉
+
+You are completely free to fork, clone, and build upon this repository. Because this is an open ecosystem, you can add any features to it, expand its capabilities, or completely redesign the UI to suit your needs.
+
+If you have great ideas for even more features (like a video player, PDF viewer, or multiple account support), feel free to open a Pull Request or just use the code for your own custom Android apps!
