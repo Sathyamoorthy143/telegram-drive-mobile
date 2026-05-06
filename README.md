@@ -8,6 +8,8 @@ Welcome to **Telegram Drive Mobile**, a standalone React Native Android applicat
 
 This project successfully ports the powerful desktop MTProto capabilities of GramJS into a lightweight, standalone mobile environment. It completely bypasses the need for a local Rust desktop backend by polyfilling Node.js cryptography and networking streams directly within React Native.
 
+**⭐️ Origin & Inspiration:** This mobile application is a direct port and evolution of the incredible [Telegram Drive Desktop](https://github.com/caamer20/Telegram-Drive) project by caamer20. We highly recommend checking out the original repository!
+
 ### Key Features
 *   **Direct MTProto Connection:** Connects directly to Telegram's core servers using AES-encrypted WebSockets.
 *   **Standalone Architecture:** Fully decoupled from any desktop application or local server.
