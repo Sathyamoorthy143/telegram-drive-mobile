@@ -1,20 +1,65 @@
-import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View } from 'react-native';
+import React from 'react';
+import { View, ActivityIndicator, StyleSheet, StatusBar } from 'react-native';
+import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { AuthProvider, useAuth } from './src/context/AuthContext';
+import { FolderProvider } from './src/context/FolderContext';
+import AuthScreen from './src/screens/AuthScreen';
+import DashboardScreen from './src/screens/DashboardScreen';
+import { Colors } from './src/theme';
+
+const Stack = createNativeStackNavigator();
+
+const DarkTheme = {
+  ...DefaultTheme,
+  colors: {
+    ...DefaultTheme.colors,
+    background: Colors.dark.bg,
+    card: Colors.dark.surface,
+    text: Colors.dark.text,
+    border: Colors.dark.border,
+    primary: Colors.dark.primary,
+  },
+};
+
+function AppNavigator() {
+  const { isLoading, isAuthenticated } = useAuth();
+
+  if (isLoading) {
+    return (
+      <View style={[styles.loading, { backgroundColor: Colors.dark.bg }]}>
+        <ActivityIndicator size="large" color={Colors.dark.primary} />
+      </View>
+    );
+  }
+
+  return (
+    <Stack.Navigator screenOptions={{ headerShown: false, animation: 'fade' }}>
+      {isAuthenticated ? (
+        <Stack.Screen name="Dashboard" component={DashboardScreen} />
+      ) : (
+        <Stack.Screen name="Auth" component={AuthScreen} />
+      )}
+    </Stack.Navigator>
+  );
+}
 
 export default function App() {
   return (
-    <View style={styles.container}>
-      <Text>Open up App.tsx to start working on your app!</Text>
-      <StatusBar style="auto" />
-    </View>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <StatusBar barStyle="light-content" backgroundColor={Colors.dark.bg} />
+      <AuthProvider>
+        <FolderProvider>
+          <NavigationContainer theme={DarkTheme}>
+            <AppNavigator />
+          </NavigationContainer>
+        </FolderProvider>
+      </AuthProvider>
+    </GestureHandlerRootView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  loading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 });
