@@ -14,7 +14,8 @@ const FILE_ICONS: Record<string, string> = {
   exe: '⚙️', apk: '📱', dmg: '💿', iso: '💿',
 };
 
-function getIcon(name: string): string {
+function getIcon(name: string, iconType?: string): string {
+  if (iconType === 'folder' || name.endsWith('/')) return '📂';
   const ext = name.split('.').pop()?.toLowerCase() || '';
   return FILE_ICONS[ext] || '📎';
 }
@@ -41,7 +42,7 @@ export function FileCard({ file, selected, onPress, onLongPress }: FileCardProps
       activeOpacity={0.7}
     >
       <View style={[styles.iconArea, { backgroundColor: c.white05 }]}>
-        <Text style={styles.fileIcon}>{getIcon(file.name)}</Text>
+        <Text style={styles.fileIcon}>{getIcon(file.name, file.iconType)}</Text>
       </View>
       <Text style={[styles.fileName, { color: c.text }]} numberOfLines={2}>{file.name}</Text>
       <Text style={[styles.fileSize, { color: c.subtext }]}>{file.sizeStr}</Text>
@@ -70,7 +71,7 @@ export function FileListItem({ file, selected, onPress, onLongPress }: FileListI
       activeOpacity={0.7}
     >
       <View style={[styles.listIcon, { backgroundColor: c.white05 }]}>
-        <Text style={styles.listIconText}>{getIcon(file.name)}</Text>
+        <Text style={styles.listIconText}>{getIcon(file.name, file.iconType)}</Text>
       </View>
       <View style={styles.listInfo}>
         <Text style={[styles.listName, { color: c.text }]} numberOfLines={1}>{file.name}</Text>

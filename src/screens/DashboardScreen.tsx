@@ -10,7 +10,7 @@ import { Colors, Spacing, FontSize, BorderRadius } from '../theme';
 import { FileMetadata, telegramService } from '../services/telegram';
 import { useFolders } from '../context/FolderContext';
 import { FileCard, FileListItem } from '../components/FileCard';
-import Sidebar from '../components/Sidebar';
+import AiAssistantModal from '../components/AiAssistantModal';
 
 export default function DashboardScreen() {
   const c = Colors.dark;
@@ -25,10 +25,12 @@ export default function DashboardScreen() {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [sidebarVisible, setSidebarVisible] = useState(false);
+  const [aiVisible, setAiVisible] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [downloading, setDownloading] = useState<number | null>(null);
   const [downloadProgress, setDownloadProgress] = useState(0);
+  const [clipboard, setClipboard] = useState<{ type: 'cut' | 'copy'; fileIds: number[]; folderIds: number[]; sourceFolderId: number | null } | null>(null);
 
   const currentFolderName = activeFolderId === null
     ? 'Saved Messages'
@@ -54,6 +56,21 @@ export default function DashboardScreen() {
     loadFiles();
   }, [activeFolderId, loadFiles]);
 
+  // Merge subfolders
+  const subFolders = folders
+    .filter(f => f.parentId === activeFolderId)
+    .map(f => ({
+      id: f.id,
+      folderId: activeFolderId,
+      name: f.name,
+      size: 0,
+      sizeStr: 'Folder',
+      createdAt: '',
+      iconType: 'folder'
+    } as FileMetadata));
+
+  const combinedFiles = [...subFolders, ...files];
+
   // Search
   useEffect(() => {
     if (searchTerm.length < 3) { setSearchResults([]); return; }
@@ -71,7 +88,7 @@ export default function DashboardScreen() {
 
   const displayedFiles = searchTerm.length > 2
     ? searchResults
-    : files.filter(f => f.name.toLowerCase().includes(searchTerm.toLowerCase()));
+    : combinedFiles.filter(f => f.name.toLowerCase().includes(searchTerm.toLowerCase()));
 
   const handleRefresh = () => {
     setRefreshing(true);
@@ -81,8 +98,10 @@ export default function DashboardScreen() {
   const handleFilePress = (file: FileMetadata) => {
     if (selectedIds.length > 0) {
       toggleSelection(file.id);
+    } else if (file.iconType === 'folder') {
+      // Navigate into folder (handled by Context in mobile via side effect usually, or we call setActiveFolderId)
+      // Wait, FolderContext usually provides setActiveFolderId.
     } else {
-      // Preview or show action sheet
       showFileActions(file);
     }
   };
@@ -92,11 +111,95 @@ export default function DashboardScreen() {
   };
 
   const showFileActions = (file: FileMetadata) => {
-    Alert.alert(file.name, `Size: ${file.sizeStr}`, [
-      { text: 'Download', onPress: () => handleDownload(file) },
-      { text: 'Delete', style: 'destructive', onPress: () => handleDelete(file) },
+    const isFolder = file.iconType === 'folder';
+    const options = [
+      { text: 'Rename', onPress: () => handleRename(file) },
+      { text: 'Cut', onPress: () => handleCut([file.id]) },
+      { text: 'Copy', onPress: () => handleCopy([file.id]) },
+      { text: 'Properties', onPress: () => handleProperties(file) },
+    ];
+
+    if (!isFolder) {
+      options.unshift({ text: 'Download', onPress: () => handleDownload(file) } as any);
+    }
+
+    options.push({ text: 'Delete', style: 'destructive', onPress: () => handleDelete(file) } as any);
+    options.push({ text: 'Cancel', style: 'cancel' } as any);
+
+    Alert.alert(file.name, isFolder ? 'Folder Actions' : `Size: ${file.sizeStr}`, options as any);
+  };
+
+  const handleRename = (file: FileMetadata) => {
+    if (file.iconType !== 'folder') {
+       Alert.alert('Info', 'Direct renaming of files is not supported by Telegram. Re-upload with a different name.');
+       return;
+    }
+    Alert.prompt('Rename Folder', 'Enter new name', [
       { text: 'Cancel', style: 'cancel' },
-    ]);
+      { text: 'Rename', onPress: async (name) => {
+          if (!name) return;
+          try {
+            await telegramService.renameFolder(file.id, name);
+            loadFiles();
+            // Need to reload folders context too
+          } catch (e: any) { Alert.alert('Error', e.message); }
+      }},
+    ], 'plain-text', file.name);
+  };
+
+  const handleProperties = async (file: FileMetadata) => {
+    if (file.iconType === 'folder') {
+      try {
+        const props = await telegramService.getFolderProperties(file.id);
+        Alert.alert('Folder Properties', `Name: ${file.name}\nFiles: ${props.file_count}\nTotal Size: ${formatBytes(props.total_size)}\nCreated: ${new Date(props.created_at).toLocaleString()}`);
+      } catch (e: any) { Alert.alert('Error', e.message); }
+    } else {
+      Alert.alert('File Properties', `Name: ${file.name}\nSize: ${file.sizeStr}\nType: ${file.mimeType || 'Unknown'}\nCreated: ${new Date(file.createdAt).toLocaleString()}`);
+    }
+  };
+
+  const formatBytes = (bytes: number) => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  };
+
+  const handleCut = (ids: number[]) => {
+    const selected = displayedFiles.filter(f => ids.includes(f.id));
+    setClipboard({
+      type: 'cut',
+      fileIds: selected.filter(f => f.iconType !== 'folder').map(f => f.id),
+      folderIds: selected.filter(f => f.iconType === 'folder').map(f => f.id),
+      sourceFolderId: activeFolderId
+    });
+    setSelectedIds([]);
+  };
+
+  const handleCopy = (ids: number[]) => {
+    const selected = displayedFiles.filter(f => ids.includes(f.id));
+    setClipboard({
+      type: 'copy',
+      fileIds: selected.filter(f => f.iconType !== 'folder').map(f => f.id),
+      folderIds: selected.filter(f => f.iconType === 'folder').map(f => f.id),
+      sourceFolderId: activeFolderId
+    });
+    setSelectedIds([]);
+  };
+
+  const handlePaste = async () => {
+    if (!clipboard) return;
+    try {
+      if (clipboard.type === 'cut') {
+        await telegramService.moveItems(clipboard.fileIds, clipboard.folderIds, clipboard.sourceFolderId, activeFolderId);
+        setClipboard(null);
+      } else {
+        await telegramService.copyItems(clipboard.fileIds, clipboard.folderIds, clipboard.sourceFolderId, activeFolderId);
+      }
+      loadFiles();
+      Alert.alert('Success', 'Items pasted successfully');
+    } catch (e: any) { Alert.alert('Error', e.message); }
   };
 
   const handleUpload = async () => {
@@ -152,13 +255,18 @@ export default function DashboardScreen() {
   };
 
   const handleDelete = (file: FileMetadata) => {
-    Alert.alert('Delete File', `Delete "${file.name}"?`, [
+    const isFolder = file.iconType === 'folder';
+    Alert.alert(`Delete ${isFolder ? 'Folder' : 'File'}`, `Delete "${file.name}"?`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete', style: 'destructive', onPress: async () => {
           try {
-            await telegramService.deleteFile(file.id, activeFolderId);
-            setFiles(prev => prev.filter(f => f.id !== file.id));
+            if (isFolder) {
+              await telegramService.deleteFolder(file.id);
+            } else {
+              await telegramService.deleteFile(file.id, activeFolderId);
+            }
+            loadFiles();
           } catch (e: any) {
             Alert.alert('Error', e.message);
           }
@@ -168,12 +276,19 @@ export default function DashboardScreen() {
   };
 
   const handleBulkDelete = () => {
-    Alert.alert('Delete Files', `Delete ${selectedIds.length} files?`, [
+    Alert.alert('Delete Items', `Delete ${selectedIds.length} items?`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete', style: 'destructive', onPress: async () => {
           for (const id of selectedIds) {
-            try { await telegramService.deleteFile(id, activeFolderId); } catch {}
+            const item = displayedFiles.find(f => f.id === id);
+            try { 
+              if (item?.iconType === 'folder') {
+                await telegramService.deleteFolder(id);
+              } else {
+                await telegramService.deleteFile(id, activeFolderId); 
+              }
+            } catch {}
           }
           setSelectedIds([]);
           loadFiles();
@@ -293,17 +408,34 @@ export default function DashboardScreen() {
         />
       )}
 
-      {/* FAB - Upload Button */}
-      <TouchableOpacity
-        style={[styles.fab, { backgroundColor: c.primary }]}
-        onPress={handleUpload}
-        disabled={uploading}
-      >
-        <Text style={styles.fabIcon}>{uploading ? '⏳' : '+'}</Text>
-      </TouchableOpacity>
+      {/* FAB - Action Buttons */}
+      <View style={styles.fabContainer}>
+        {clipboard && (
+          <TouchableOpacity
+            style={[styles.fab, { backgroundColor: c.success, marginBottom: Spacing.md }]}
+            onPress={handlePaste}
+          >
+            <Text style={styles.fabIcon}>📋</Text>
+          </TouchableOpacity>
+        )}
+        <TouchableOpacity
+          style={[styles.fab, { backgroundColor: '#8b5cf6', marginBottom: Spacing.md }]}
+          onPress={() => setAiVisible(true)}
+        >
+          <Text style={styles.fabIcon}>✨</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.fab, { backgroundColor: c.primary }]}
+          onPress={handleUpload}
+          disabled={uploading}
+        >
+          <Text style={styles.fabIcon}>{uploading ? '⏳' : '+'}</Text>
+        </TouchableOpacity>
+      </View>
 
-      {/* Sidebar */}
+      {/* Modals */}
       <Sidebar visible={sidebarVisible} onClose={() => setSidebarVisible(false)} />
+      <AiAssistantModal visible={aiVisible} onClose={() => setAiVisible(false)} />
     </View>
   );
 }
@@ -346,8 +478,11 @@ const styles = StyleSheet.create({
   emptyTitle: { fontSize: FontSize.xl, fontWeight: '600', marginBottom: Spacing.sm },
   emptyHint: { fontSize: FontSize.md, textAlign: 'center' },
   gridContainer: { paddingHorizontal: Spacing.sm, paddingTop: Spacing.sm },
-  fab: {
+  fabContainer: {
     position: 'absolute', bottom: 30, right: 20,
+    alignItems: 'center',
+  },
+  fab: {
     width: 60, height: 60, borderRadius: 30,
     alignItems: 'center', justifyContent: 'center',
     elevation: 8,

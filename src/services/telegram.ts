@@ -148,9 +148,20 @@ class TelegramService {
             .replace(/ \[TD\]/gi, '')
             .replace(/\[TD\]/gi, '')
             .trim();
+          
+          // Try to get parent_id from about
+          let parentId: number | undefined;
+          try {
+             const full = await this.client.invoke(new Api.channels.GetFullChannel({ channel }));
+             const about = (full as any).fullChat?.about || '';
+             const match = about.match(/parent_id:(-?\d+)/);
+             if (match) parentId = Number(match[1]);
+          } catch {}
+
           folders.push({
             id: channel.id.toJSNumber ? channel.id.toJSNumber() : Number(channel.id),
             name: displayName,
+            parentId,
           });
         }
       }
@@ -221,11 +232,44 @@ class TelegramService {
   async deleteFolder(folderId: number): Promise<void> {
     if (!this.client) throw new Error('Client not initialized');
     const peer = await this._resolvePeer(folderId);
-    const inputChannel = new Api.InputChannel({
-      channelId: (peer as any).id || folderId,
-      accessHash: (peer as any).accessHash || BigInt(0),
-    });
-    await this.client.invoke(new Api.channels.DeleteChannel({ channel: inputChannel }));
+    await this.client.invoke(new Api.channels.DeleteChannel({ channel: peer }));
+  }
+
+  async renameFolder(folderId: number, newName: string): Promise<void> {
+    if (!this.client) throw new Error('Client not initialized');
+    const peer = await this._resolvePeer(folderId);
+    await this.client.invoke(new Api.channels.EditTitle({
+      channel: peer,
+      title: `${newName} [TD]`,
+    }));
+  }
+
+  async getFolderProperties(folderId: number): Promise<{ file_count: number; total_size: number; created_at: string }> {
+    if (!this.client) throw new Error('Client not initialized');
+    const peer = await this._resolvePeer(folderId);
+    const messages = await this.client.getMessages(peer, { limit: 1000 });
+    
+    let count = 0;
+    let totalSize = 0;
+    let earliestDate = 0;
+
+    for (const msg of messages) {
+      if (msg.media) {
+        count++;
+        if (msg.media instanceof Api.MessageMediaDocument && msg.media.document instanceof Api.Document) {
+          totalSize += Number(msg.media.document.size);
+        }
+      }
+      if (msg.date && (earliestDate === 0 || msg.date < earliestDate)) {
+        earliestDate = msg.date;
+      }
+    }
+
+    return {
+      file_count: count,
+      total_size: totalSize,
+      created_at: earliestDate ? new Date(earliestDate * 1000).toISOString() : 'N/A',
+    };
   }
 
   async deleteFile(messageId: number, folderId: number | null): Promise<void> {
@@ -312,16 +356,78 @@ class TelegramService {
     return files;
   }
 
-  async moveFiles(
+  async moveItems(
     messageIds: number[],
+    folderIds: number[],
     sourceFolderId: number | null,
     targetFolderId: number | null
   ): Promise<void> {
     if (!this.client) throw new Error('Client not initialized');
-    const sourcePeer = sourceFolderId ? await this._resolvePeer(sourceFolderId) : 'me';
-    const targetPeer = targetFolderId ? await this._resolvePeer(targetFolderId) : 'me';
-    await this.client.forwardMessages(targetPeer, { messages: messageIds, fromPeer: sourcePeer });
-    await this.client.deleteMessages(sourcePeer, messageIds, { revoke: true });
+    
+    // 1. Files
+    if (messageIds.length > 0 && sourceFolderId !== targetFolderId) {
+       const sourcePeer = sourceFolderId ? await this._resolvePeer(sourceFolderId) : 'me';
+       const targetPeer = targetFolderId ? await this._resolvePeer(targetFolderId) : 'me';
+       await this.client.forwardMessages(targetPeer, { messages: messageIds, fromPeer: sourcePeer });
+       await this.client.deleteMessages(sourcePeer, messageIds, { revoke: true });
+    }
+
+    // 2. Folders
+    for (const fid of folderIds) {
+      const peer = await this._resolvePeer(fid);
+      const full = await this.client.invoke(new Api.channels.GetFullChannel({ channel: peer }));
+      const about = (full as any).fullChat?.about || '';
+      const lines = about.split('\n').filter((l: string) => !l.startsWith('parent_id:'));
+      if (targetFolderId !== null) {
+        lines.push(`parent_id:${targetFolderId}`);
+      }
+      await this.client.invoke(new Api.messages.EditChatAbout({
+        peer,
+        about: lines.join('\n'),
+      }));
+    }
+  }
+
+  async copyItems(
+    messageIds: number[],
+    folderIds: number[],
+    sourceFolderId: number | null,
+    targetFolderId: number | null
+  ): Promise<void> {
+    if (!this.client) throw new Error('Client not initialized');
+
+    // 1. Files
+    if (messageIds.length > 0 && sourceFolderId !== targetFolderId) {
+       const sourcePeer = sourceFolderId ? await this._resolvePeer(sourceFolderId) : 'me';
+       const targetPeer = targetFolderId ? await this._resolvePeer(targetFolderId) : 'me';
+       await this.client.forwardMessages(targetPeer, { messages: messageIds, fromPeer: sourcePeer });
+    }
+
+    // 2. Folders (Clone)
+    for (const fid of folderIds) {
+       const sourcePeer = await this._resolvePeer(fid);
+       const full = await this.client.invoke(new Api.channels.GetFullChannel({ channel: sourcePeer }));
+       const chat = (full as any).chats[0] as Api.Channel;
+       const name = chat.title.replace(' [TD]', '');
+
+       const newFolder = await this.createFolder(`${name} (Copy)`);
+       // Update parent
+       if (targetFolderId !== null) {
+          const newPeer = await this._resolvePeer(newFolder.id);
+          await this.client.invoke(new Api.messages.EditChatAbout({
+            peer: newPeer,
+            about: `Telegram Drive Storage Folder\n[telegram-drive-folder]\nparent_id:${targetFolderId}`,
+          }));
+       }
+
+       // Forward messages
+       const messages = await this.client.getMessages(sourcePeer, { limit: 100 });
+       const msgIds = messages.filter(m => m.media).map(m => m.id);
+       if (msgIds.length > 0) {
+          const targetPeer = await this._resolvePeer(newFolder.id);
+          await this.client.forwardMessages(targetPeer, { messages: msgIds, fromPeer: sourcePeer });
+       }
+    }
   }
 
   private async _resolvePeer(folderId: number): Promise<Api.TypeInputPeer> {
