@@ -10,6 +10,7 @@ import { Colors, Spacing, FontSize, BorderRadius } from '../theme';
 import { FileMetadata, telegramService } from '../services/telegram';
 import { useFolders } from '../context/FolderContext';
 import { FileCard, FileListItem } from '../components/FileCard';
+import Sidebar from '../components/Sidebar';
 import AiAssistantModal from '../components/AiAssistantModal';
 
 export default function DashboardScreen() {
@@ -204,21 +205,26 @@ export default function DashboardScreen() {
 
   const handleUpload = async () => {
     try {
-      const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
+      const result = await DocumentPicker.getDocumentAsync({ 
+        copyToCacheDirectory: true,
+        multiple: true 
+      });
       if (result.canceled || !result.assets?.length) return;
 
-      const asset = result.assets[0];
       setUploading(true);
-      setUploadProgress(0);
-
-      await telegramService.uploadFile(
-        asset.uri,
-        activeFolderId,
-        (progress) => setUploadProgress(progress)
-      );
+      let count = 0;
+      for (const asset of result.assets) {
+        setUploadProgress(0);
+        await telegramService.uploadFile(
+          asset.uri,
+          activeFolderId,
+          (progress) => setUploadProgress(progress)
+        );
+        count++;
+      }
 
       setUploading(false);
-      Alert.alert('Success', `"${asset.name}" uploaded successfully`);
+      Alert.alert('Success', `${count} file(s) uploaded successfully`);
       loadFiles();
     } catch (e: any) {
       setUploading(false);
