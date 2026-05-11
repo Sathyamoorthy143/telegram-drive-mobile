@@ -6,6 +6,7 @@ import { aiService } from '../services/ai';
 export default function SettingsScreen({ navigation }: any) {
   const c = Colors.dark;
   const [apiKey, setApiKey] = useState('');
+  const [proxyUrl, setProxyUrl] = useState('');
   const [isDark, setIsDark] = useState(true);
 
   useEffect(() => {
@@ -14,12 +15,15 @@ export default function SettingsScreen({ navigation }: any) {
 
   const loadSettings = async () => {
     const key = await aiService.getApiKey();
+    const url = await aiService.getProxyUrl();
     setApiKey(key);
+    setProxyUrl(url);
   };
 
   const handleSave = async () => {
     try {
       await aiService.setApiKey(apiKey);
+      await aiService.setProxyUrl(proxyUrl);
       Alert.alert('Success', 'Settings saved');
       navigation.goBack();
     } catch (e: any) {
@@ -39,7 +43,8 @@ export default function SettingsScreen({ navigation }: any) {
       <ScrollView style={styles.content}>
         <View style={styles.section}>
           <Text style={[styles.sectionLabel, { color: c.subtext }]}>AI CONFIGURATION</Text>
-          <View style={[styles.inputGroup, { backgroundColor: c.surface }]}>
+          
+          <View style={[styles.inputGroup, { backgroundColor: c.surface, marginBottom: Spacing.md }]}>
             <Text style={[styles.label, { color: c.text }]}>Gemini API Key</Text>
             <TextInput
               style={[styles.input, { color: c.text, borderBottomColor: c.border }]}
@@ -49,6 +54,20 @@ export default function SettingsScreen({ navigation }: any) {
               placeholderTextColor={c.white20}
               secureTextEntry
             />
+          </View>
+
+          <View style={[styles.inputGroup, { backgroundColor: c.surface }]}>
+            <Text style={[styles.label, { color: c.text }]}>AI Proxy URL</Text>
+            <TextInput
+              style={[styles.input, { color: c.text, borderBottomColor: c.border }]}
+              value={proxyUrl}
+              onChangeText={setProxyUrl}
+              placeholder="https://your-proxy.com/chat"
+              placeholderTextColor={c.white20}
+            />
+            <Text style={{ color: c.subtext, fontSize: 10, marginTop: 4 }}>
+              Default: https://telegram-drive-desktop.onrender.com/chat
+            </Text>
           </View>
         </View>
 
