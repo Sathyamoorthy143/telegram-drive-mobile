@@ -1,108 +1,80 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, FlatList, Alert, ActivityIndicator } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, ActivityIndicator, Image, Dimensions } from 'react-native';
+import Animated, { useSharedValue, useAnimatedStyle, withSpring, interpolate, Extrapolate } from 'react-native-reanimated';
 import { Colors, Spacing, FontSize, BorderRadius } from '../theme';
 import { FolderMetadata, telegramService } from '../services/telegram';
 import { useFolders } from '../context/FolderContext';
 import { useAuth } from '../context/AuthContext';
 
+const { width } = Dimensions.get('window');
+const DRAWER_WIDTH = 280;
+
+interface UserInfo {
+  firstName: string;
+  lastName?: string;
+  username?: string;
+  photo?: string | null;
+}
+
 interface SidebarProps {
   visible: boolean;
   onClose: () => void;
+  onNavigate?: (screen: string) => void;
 }
 
-export default function Sidebar({ visible, onClose }: SidebarProps) {
+export default function Sidebar({ visible, onClose, onNavigate }: SidebarProps) {
   const c = Colors.dark;
   const { folders, setFolders, activeFolderId, setActiveFolderId } = useFolders();
   const { setAuthenticated } = useAuth();
-  const [syncing, setSyncing] = React.useState(false);
-  const [creating, setCreating] = React.useState(false);
+  
+  const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
 
-  if (!visible) return null;
+  const translateX = useSharedValue(-DRAWER_WIDTH);
+
+  useEffect(() => {
+    translateX.value = withSpring(visible ? 0 : -DRAWER_WIDTH, { damping: 20 });
+    if (visible && !userInfo) {
+      fetchUser();
+    }
+  }, [visible]);
+
+  const fetchUser = async () => {
+    try {
+      const info = await telegramService.getUserInfo();
+      const photo = await telegramService.getProfilePhoto();
+      setUserInfo({ ...info, photo });
+    } catch {}
+  };
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value }],
+  }));
+
+  const overlayStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(translateX.value, [-DRAWER_WIDTH, 0], [0, 1], Extrapolate.CLAMP),
+    display: translateX.value === -DRAWER_WIDTH ? 'none' : 'flex',
+  }));
 
   const handleSync = async () => {
     setSyncing(true);
     try {
       const found = await telegramService.scanFolders();
-      const merged = [...folders];
-      let added = 0;
-      for (const f of found) {
-        if (!merged.find(e => e.id === f.id)) { merged.push(f); added++; }
-      }
-      setFolders(merged);
-      Alert.alert('Sync Complete', added > 0 ? `Found ${added} new folders.` : 'No new folders found.');
+      setFolders(found);
+      Alert.alert('Sync Complete', `Updated ${found.length} folders.`);
     } catch (e: any) {
-      Alert.alert('Sync Failed', e.message || 'Unknown error');
+      Alert.alert('Sync Failed', e.message);
     } finally {
       setSyncing(false);
     }
   };
 
-  const handleCreate = () => {
-    Alert.prompt?.('Create Folder', 'Enter folder name:', async (name: string) => {
-      if (!name?.trim()) return;
-      setCreating(true);
-      try {
-        const folder = await telegramService.createFolder(name.trim());
-        setFolders(prev => [...prev, folder]);
-      } catch (e: any) {
-        Alert.alert('Error', e.message);
-      } finally {
-        setCreating(false);
-      }
-    }) || Alert.alert('Create Folder', 'Enter a name in the input below', [
-      { text: 'Cancel' },
-      {
-        text: 'Create', onPress: () => {
-          // Fallback for Android - we'll use a simple approach
-          createFolderAndroid();
-        }
-      },
-    ]);
-  };
-
-  const createFolderAndroid = () => {
-    // Simple folder name input for Android
-    const name = 'New Folder';
-    (async () => {
-      setCreating(true);
-      try {
-        const folder = await telegramService.createFolder(name);
-        setFolders(prev => [...prev, folder]);
-      } catch (e: any) {
-        Alert.alert('Error', e.message);
-      } finally {
-        setCreating(false);
-      }
-    })();
-  };
-
-  const handleDeleteFolder = (folder: FolderMetadata) => {
-    Alert.alert('Delete Folder', `Delete "${folder.name}"?\nThis will delete the channel on Telegram.`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete', style: 'destructive', onPress: async () => {
-          try {
-            await telegramService.deleteFolder(folder.id);
-            setFolders(prev => prev.filter(f => f.id !== folder.id));
-            if (activeFolderId === folder.id) setActiveFolderId(null);
-          } catch (e: any) {
-            Alert.alert('Error', e.message);
-          }
-        }
-      },
-    ]);
-  };
-
-  const handleLogout = () => {
-    Alert.alert('Sign Out', 'Are you sure? This will disconnect your session.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Sign Out', style: 'destructive', onPress: async () => {
-          await telegramService.logout();
-          setAuthenticated(false);
-        }
-      },
-    ]);
+  const toggleExpand = (id: number) => {
+    const next = new Set(expandedIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setExpandedIds(next);
   };
 
   const selectFolder = (id: number | null) => {
@@ -110,96 +82,146 @@ export default function Sidebar({ visible, onClose }: SidebarProps) {
     onClose();
   };
 
-  return (
-    <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={onClose}>
-      <TouchableOpacity activeOpacity={1} style={[styles.drawer, { backgroundColor: c.surface, borderColor: c.border }]}>
-        {/* Header */}
-        <View style={[styles.header, { borderBottomColor: c.border }]}>
-          <Text style={[styles.headerTitle, { color: c.text }]}>☁️ Telegram Drive</Text>
+  const renderTree = (parentId: number | null = null, level = 0) => {
+    const children = folders.filter(f => f.parentId === parentId);
+    if (children.length === 0 && level > 0) return null;
+
+    return children.map(folder => {
+      const hasChildren = folders.some(f => f.parentId === folder.id);
+      const isExpanded = expandedIds.has(folder.id);
+      const isActive = activeFolderId === folder.id;
+
+      return (
+        <View key={folder.id}>
+          <TouchableOpacity
+            style={[
+              styles.folderItem,
+              { paddingLeft: Spacing.xl + level * 20 },
+              isActive && { backgroundColor: c.primary + '15' }
+            ]}
+            onPress={() => selectFolder(folder.id)}
+            onLongPress={() => toggleExpand(folder.id)}
+          >
+            <TouchableOpacity onPress={() => toggleExpand(folder.id)} style={styles.chevron}>
+              <Text style={[styles.chevronText, { color: c.subtext }]}>
+                {hasChildren ? (isExpanded ? '▼' : '▶') : ' '}
+              </Text>
+            </TouchableOpacity>
+            <Text style={styles.folderIcon}>📁</Text>
+            <Text style={[styles.folderName, { color: isActive ? c.primaryLight : c.text }]} numberOfLines={1}>
+              {folder.name}
+            </Text>
+          </TouchableOpacity>
+          {isExpanded && renderTree(folder.id, level + 1)}
         </View>
+      );
+    });
+  };
 
-        {/* Saved Messages */}
-        <TouchableOpacity
-          style={[styles.folderItem, activeFolderId === null && { backgroundColor: c.primary + '15' }]}
-          onPress={() => selectFolder(null)}
-        >
-          <Text style={styles.folderIcon}>💬</Text>
-          <Text style={[styles.folderName, { color: activeFolderId === null ? c.primaryLight : c.text }]}>
-            Saved Messages
-          </Text>
-        </TouchableOpacity>
+  const handleLogout = () => {
+    Alert.alert('Sign Out', 'Disconnect session?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Sign Out', style: 'destructive', onPress: async () => {
+          await telegramService.logout();
+          setAuthenticated(false);
+      }},
+    ]);
+  };
 
-        {/* Divider */}
-        <View style={[styles.divider, { backgroundColor: c.border }]} />
+  return (
+    <View style={styles.container} pointerEvents={visible ? 'auto' : 'none'}>
+      <Animated.View style={[styles.overlay, overlayStyle]}>
+        <TouchableOpacity style={{ flex: 1 }} onPress={onClose} />
+      </Animated.View>
 
-        {/* Folders Label */}
-        <View style={styles.sectionHeader}>
-          <Text style={[styles.sectionTitle, { color: c.subtext }]}>FOLDERS</Text>
-          <View style={styles.sectionActions}>
-            <TouchableOpacity onPress={handleSync} disabled={syncing} style={styles.iconBtn}>
-              {syncing ? <ActivityIndicator size="small" color={c.primary} /> : <Text style={styles.actionIcon}>🔄</Text>}
-            </TouchableOpacity>
-            <TouchableOpacity onPress={handleCreate} disabled={creating} style={styles.iconBtn}>
-              {creating ? <ActivityIndicator size="small" color={c.primary} /> : <Text style={styles.actionIcon}>➕</Text>}
-            </TouchableOpacity>
+      <Animated.View style={[styles.drawer, animatedStyle, { backgroundColor: c.bg }]}>
+        {/* User Profile */}
+        <View style={[styles.profile, { borderBottomColor: c.border }]}>
+          {userInfo?.photo ? (
+            <Image source={{ uri: userInfo.photo }} style={styles.avatar} />
+          ) : (
+            <View style={[styles.avatarPlaceholder, { backgroundColor: c.primary }]}>
+              <Text style={styles.avatarInitial}>{userInfo?.firstName[0] || 'U'}</Text>
+            </View>
+          )}
+          <View style={styles.userInfo}>
+            <Text style={[styles.userName, { color: c.text }]}>
+              {userInfo?.firstName} {userInfo?.lastName}
+            </Text>
+            <Text style={[styles.userHandle, { color: c.subtext }]}>
+              @{userInfo?.username || 'user'}
+            </Text>
           </View>
         </View>
 
-        {/* Folder List */}
-        <FlatList
-          data={folders}
-          keyExtractor={item => String(item.id)}
-          style={styles.folderList}
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              style={[styles.folderItem, activeFolderId === item.id && { backgroundColor: c.primary + '15' }]}
-              onPress={() => selectFolder(item.id)}
-              onLongPress={() => handleDeleteFolder(item)}
-            >
-              <Text style={styles.folderIcon}>📁</Text>
-              <Text style={[styles.folderName, { color: activeFolderId === item.id ? c.primaryLight : c.text }]} numberOfLines={1}>
-                {item.name}
-              </Text>
-            </TouchableOpacity>
-          )}
-          ListEmptyComponent={
-            <View style={styles.emptyState}>
-              <Text style={[styles.emptyText, { color: c.subtext }]}>No folders yet</Text>
-              <Text style={[styles.emptyHint, { color: c.white20 }]}>Tap 🔄 to sync or ➕ to create</Text>
-            </View>
-          }
-        />
+        <ScrollView style={styles.content}>
+          <TouchableOpacity
+            style={[styles.navItem, activeFolderId === null && { backgroundColor: c.primary + '15' }]}
+            onPress={() => selectFolder(null)}
+          >
+            <Text style={styles.navIcon}>💬</Text>
+            <Text style={[styles.navText, { color: activeFolderId === null ? c.primaryLight : c.text }]}>
+              Saved Messages
+            </Text>
+          </TouchableOpacity>
 
-        {/* Footer */}
+          <View style={styles.sectionHeader}>
+            <Text style={[styles.sectionTitle, { color: c.subtext }]}>FOLDERS</Text>
+            <TouchableOpacity onPress={handleSync} disabled={syncing}>
+              {syncing ? <ActivityIndicator size="small" color={c.primary} /> : <Text style={styles.syncIcon}>🔄</Text>}
+            </TouchableOpacity>
+          </View>
+
+          {renderTree()}
+          
+          <View style={[styles.divider, { backgroundColor: c.border }]} />
+          
+          <TouchableOpacity style={styles.navItem} onPress={() => { onClose(); onNavigate?.('Settings'); }}>
+            <Text style={styles.navIcon}>⚙️</Text>
+            <Text style={[styles.navText, { color: c.text }]}>Settings</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.navItem} onPress={() => { onClose(); onNavigate?.('Logs'); }}>
+            <Text style={styles.navIcon}>📋</Text>
+            <Text style={[styles.navText, { color: c.text }]}>Activity Logs</Text>
+          </TouchableOpacity>
+        </ScrollView>
+
         <View style={[styles.footer, { borderTopColor: c.border }]}>
           <TouchableOpacity style={[styles.logoutBtn, { backgroundColor: c.error + '15' }]} onPress={handleLogout}>
             <Text style={[styles.logoutText, { color: c.error }]}>Sign Out</Text>
           </TouchableOpacity>
         </View>
-      </TouchableOpacity>
-    </TouchableOpacity>
+      </Animated.View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  overlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 100, flexDirection: 'row' },
-  drawer: { width: 300, borderRightWidth: 1, flex: 1 },
-  header: { paddingHorizontal: Spacing.xl, paddingTop: 60, paddingBottom: Spacing.lg, borderBottomWidth: 1 },
-  headerTitle: { fontSize: FontSize.xl, fontWeight: '700' },
-  folderItem: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.xl, paddingVertical: Spacing.md, borderRadius: BorderRadius.sm, marginHorizontal: Spacing.sm, gap: Spacing.md },
-  folderIcon: { fontSize: 18 },
+  container: { ...StyleSheet.absoluteFillObject, zIndex: 1000 },
+  overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.6)' },
+  drawer: { width: DRAWER_WIDTH, flex: 1, elevation: 16, shadowColor: '#000', shadowOffset: { width: 4, height: 0 }, shadowOpacity: 0.3, shadowRadius: 10 },
+  profile: { paddingHorizontal: Spacing.xl, paddingTop: 60, paddingBottom: Spacing.xl, borderBottomWidth: 1, flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
+  avatar: { width: 50, height: 50, borderRadius: 25 },
+  avatarPlaceholder: { width: 50, height: 50, borderRadius: 25, alignItems: 'center', justifyContent: 'center' },
+  avatarInitial: { color: '#fff', fontSize: FontSize.xl, fontWeight: '700' },
+  userInfo: { flex: 1 },
+  userName: { fontSize: FontSize.md, fontWeight: '700' },
+  userHandle: { fontSize: FontSize.xs },
+  content: { flex: 1, paddingVertical: Spacing.md },
+  navItem: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.xl, paddingVertical: Spacing.md, gap: Spacing.md, marginHorizontal: Spacing.sm, borderRadius: BorderRadius.md },
+  navIcon: { fontSize: 18 },
+  navText: { fontSize: FontSize.md, fontWeight: '500' },
+  sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Spacing.xl, paddingVertical: Spacing.lg },
+  sectionTitle: { fontSize: FontSize.xs, fontWeight: '700', letterSpacing: 1.2 },
+  syncIcon: { fontSize: 16 },
+  folderItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.sm, paddingRight: Spacing.lg, gap: Spacing.xs, marginHorizontal: Spacing.sm, borderRadius: BorderRadius.sm },
+  chevron: { width: 24, alignItems: 'center' },
+  chevronText: { fontSize: 10 },
+  folderIcon: { fontSize: 16 },
   folderName: { fontSize: FontSize.md, flex: 1 },
-  divider: { height: 1, marginVertical: Spacing.sm },
-  sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Spacing.xl, paddingVertical: Spacing.sm },
-  sectionTitle: { fontSize: FontSize.xs, fontWeight: '700', letterSpacing: 1.5 },
-  sectionActions: { flexDirection: 'row', gap: Spacing.sm },
-  iconBtn: { padding: Spacing.xs },
-  actionIcon: { fontSize: 16 },
-  folderList: { flex: 1 },
-  emptyState: { alignItems: 'center', paddingVertical: Spacing.xxxl },
-  emptyText: { fontSize: FontSize.md },
-  emptyHint: { fontSize: FontSize.sm, marginTop: Spacing.xs },
-  footer: { borderTopWidth: 1, padding: Spacing.lg },
-  logoutBtn: { borderRadius: BorderRadius.md, paddingVertical: Spacing.md, alignItems: 'center' },
-  logoutText: { fontSize: FontSize.md, fontWeight: '600' },
+  divider: { height: 1, marginVertical: Spacing.md, marginHorizontal: Spacing.xl },
+  footer: { borderTopWidth: 1, padding: Spacing.xl },
+  logoutBtn: { padding: Spacing.md, borderRadius: BorderRadius.md, alignItems: 'center' },
+  logoutText: { fontWeight: '600' },
 });

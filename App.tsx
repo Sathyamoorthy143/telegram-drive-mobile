@@ -9,6 +9,9 @@ import AuthScreen from './src/screens/AuthScreen';
 import DashboardScreen from './src/screens/DashboardScreen';
 import { Colors } from './src/theme';
 
+import SettingsScreen from './src/screens/SettingsScreen';
+import LogsScreen from './src/screens/LogsScreen';
+
 const Stack = createNativeStackNavigator();
 
 const DarkTheme = {
@@ -35,9 +38,13 @@ function AppNavigator() {
   }
 
   return (
-    <Stack.Navigator screenOptions={{ headerShown: false, animation: 'fade' }}>
+    <Stack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
       {isAuthenticated ? (
-        <Stack.Screen name="Dashboard" component={DashboardScreen} />
+        <>
+          <Stack.Screen name="Dashboard" component={DashboardScreen} />
+          <Stack.Screen name="Settings" component={SettingsScreen} />
+          <Stack.Screen name="Logs" component={LogsScreen} />
+        </>
       ) : (
         <Stack.Screen name="Auth" component={AuthScreen} />
       )}

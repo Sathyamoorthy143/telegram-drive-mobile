@@ -11,9 +11,10 @@ import { FileMetadata, telegramService } from '../services/telegram';
 import { useFolders } from '../context/FolderContext';
 import { FileCard, FileListItem } from '../components/FileCard';
 import Sidebar from '../components/Sidebar';
+import Animated, { FadeInDown, FadeInUp, Layout } from 'react-native-reanimated';
 import AiAssistantModal from '../components/AiAssistantModal';
 
-export default function DashboardScreen() {
+export default function DashboardScreen({ navigation }: any) {
   const c = Colors.dark;
   const { folders, activeFolderId } = useFolders();
 
@@ -303,22 +304,33 @@ export default function DashboardScreen() {
     ]);
   };
 
-  const renderGridItem = ({ item }: { item: FileMetadata }) => (
-    <FileCard
-      file={item}
-      selected={selectedIds.includes(item.id)}
-      onPress={() => handleFilePress(item)}
-      onLongPress={() => toggleSelection(item.id)}
-    />
+  const renderGridItem = ({ item, index }: { item: FileMetadata, index: number }) => (
+    <Animated.View 
+      entering={FadeInUp.delay(index * 50).duration(400)} 
+      layout={Layout.springify()} 
+      style={{ flex: 0.5 }}
+    >
+      <FileCard
+        file={item}
+        selected={selectedIds.includes(item.id)}
+        onPress={() => handleFilePress(item)}
+        onLongPress={() => toggleSelection(item.id)}
+      />
+    </Animated.View>
   );
 
-  const renderListItem = ({ item }: { item: FileMetadata }) => (
-    <FileListItem
-      file={item}
-      selected={selectedIds.includes(item.id)}
-      onPress={() => handleFilePress(item)}
-      onLongPress={() => toggleSelection(item.id)}
-    />
+  const renderListItem = ({ item, index }: { item: FileMetadata, index: number }) => (
+    <Animated.View 
+      entering={FadeInDown.delay(index * 30).duration(300)} 
+      layout={Layout.springify()}
+    >
+      <FileListItem
+        file={item}
+        selected={selectedIds.includes(item.id)}
+        onPress={() => handleFilePress(item)}
+        onLongPress={() => toggleSelection(item.id)}
+      />
+    </Animated.View>
   );
 
   return (
@@ -440,7 +452,11 @@ export default function DashboardScreen() {
       </View>
 
       {/* Modals */}
-      <Sidebar visible={sidebarVisible} onClose={() => setSidebarVisible(false)} />
+      <Sidebar 
+        visible={sidebarVisible} 
+        onClose={() => setSidebarVisible(false)} 
+        onNavigate={(screen) => navigation.navigate(screen)}
+      />
       <AiAssistantModal visible={aiVisible} onClose={() => setAiVisible(false)} />
     </View>
   );

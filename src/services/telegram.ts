@@ -121,6 +121,30 @@ class TelegramService {
     await this.saveSession();
   }
 
+  async getUserInfo(): Promise<{ id: number; firstName: string; lastName?: string; username?: string; phone?: string }> {
+    if (!this.client) throw new Error('Client not initialized');
+    const me = await this.client.getMe() as Api.User;
+    return {
+      id: me.id.toJSNumber ? me.id.toJSNumber() : Number(me.id),
+      firstName: me.firstName || '',
+      lastName: me.lastName || undefined,
+      username: me.username || undefined,
+      phone: me.phone || undefined,
+    };
+  }
+
+  async getProfilePhoto(): Promise<string | null> {
+    if (!this.client) throw new Error('Client not initialized');
+    const me = await this.client.getMe() as Api.User;
+    if (!me.photo) return null;
+    try {
+      const buffer = await this.client.downloadProfilePhoto(me);
+      return `data:image/jpeg;base64,${Buffer.from(buffer).toString('base64')}`;
+    } catch {
+      return null;
+    }
+  }
+
   async logout(): Promise<void> {
     if (this.client) {
       try { await this.client.invoke(new Api.auth.LogOut()); } catch {}
