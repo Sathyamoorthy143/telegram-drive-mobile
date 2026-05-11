@@ -164,8 +164,8 @@ class TelegramService {
 
     for (const dialog of dialogs) {
       const entity = dialog.entity;
-      if (entity && entity.className === 'Channel') {
-        const channel = entity as Api.Channel;
+      if (entity && (entity.className === 'Channel' || entity.className === 'Chat')) {
+        const channel = entity as any;
         const title = channel.title || '';
         if (title.toLowerCase().includes('[td]')) {
           const displayName = title
@@ -173,13 +173,18 @@ class TelegramService {
             .replace(/\[TD\]/gi, '')
             .trim();
           
-          // Try to get parent_id from about
           let parentId: number | undefined;
           try {
+             // More robust way to get parent_id
              const full = await this.client.invoke(new Api.channels.GetFullChannel({ channel }));
-             const about = (full as any).fullChat?.about || '';
+             const about = (full as any).fullChat?.about || (full as any).about || '';
              const match = about.match(/parent_id:(-?\d+)/);
-             if (match) parentId = Number(match[1]);
+             if (match) {
+                parentId = Number(match[1]);
+                // Ensure parentId is not the same as channelId (loop protection)
+                const cid = channel.id.toJSNumber ? channel.id.toJSNumber() : Number(channel.id);
+                if (parentId === cid) parentId = undefined;
+             }
           } catch {}
 
           folders.push({
@@ -303,14 +308,25 @@ class TelegramService {
   }
 
   async uploadFile(
-    filePath: string,
+    uri: string,
     folderId: number | null,
     onProgress?: (progress: number) => void
   ): Promise<void> {
     if (!this.client) throw new Error('Client not initialized');
+    
+    // Read file into Buffer to avoid 'lstat' error in mobile environment
+    const { readAsStringAsync, getInfoAsync } = require('expo-file-system');
+    const info = await getInfoAsync(uri);
+    if (!info.exists) throw new Error('File does not exist');
+    
+    const base64 = await readAsStringAsync(uri, { encoding: 'base64' });
+    const buffer = Buffer.from(base64, 'base64');
+    const filename = uri.split('/').pop() || 'file';
+
     const peer = folderId ? await this._resolvePeer(folderId) : 'me';
     await this.client.sendFile(peer, {
-      file: filePath,
+      file: buffer,
+      fileName: filename,
       progressCallback: onProgress
         ? (progress: number) => onProgress(Math.round(progress * 100))
         : undefined,

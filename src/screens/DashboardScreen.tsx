@@ -60,7 +60,7 @@ export default function DashboardScreen({ navigation }: any) {
 
   // Merge subfolders
   const subFolders = folders
-    .filter(f => f.parentId === activeFolderId)
+    .filter(f => (f.parentId || null) === (activeFolderId || null))
     .map(f => ({
       id: f.id,
       folderId: activeFolderId,
